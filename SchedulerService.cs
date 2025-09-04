@@ -14,6 +14,37 @@ namespace Radio.Services
             currentSchedule = new WeeklySchedule(DateTime.Today);
         }
 
+        public DateTime GetDay(string dayName)
+        {
+            DayOfWeek targetDay = ParseDayName(dayName);
+            DateTime today = DateTime.Today;
+            DayOfWeek currentDay = today.DayOfWeek;
+            
+            int daysUntilTarget = ((int)targetDay - (int)currentDay + 7) % 7;
+            if (daysUntilTarget == 0 && targetDay != currentDay)
+            {
+                daysUntilTarget = 7;
+            }
+            
+            return today.AddDays(daysUntilTarget);
+        }
+
+        private DayOfWeek ParseDayName(string dayName)
+        {
+            string day = dayName.ToLower();
+            if (day == "sunday") return DayOfWeek.Sunday;
+            if (day == "monday") return DayOfWeek.Monday;
+            if (day == "tuesday") return DayOfWeek.Tuesday;
+            if (day == "wednesday") return DayOfWeek.Wednesday;
+            if (day == "thursday") return DayOfWeek.Thursday;
+            if (day == "friday") return DayOfWeek.Friday;
+            if (day == "saturday") return DayOfWeek.Saturday;
+            if (day == "today") return DateTime.Today.DayOfWeek;
+            if (day == "tomorrow") return DateTime.Today.AddDays(1).DayOfWeek;
+            
+            throw new ArgumentException($"Invalid day name: {dayName}");
+        }
+
         public void ScheduleReportage(DateTime startTime, TimeSpan duration, string title, string topic, string reporter)
         {
             Reportage reportage = new Reportage();
