@@ -1,0 +1,61 @@
+# Build outputs
+bin/
+obj/
+[Bb]in
+[Dd]ebug*/
+[Rr]elease*/
+
+# Visual Studio files
+.vs/
+.vscode/
+*.user
+*.suo
+*.cache
+*.docstates
+_ReSharper*/
+*.csproj.user
+*.rsuser
+*.userosscache
+*.sln.docstates
+Ankh.NoLoad
+
+# Compiled files
+*.dll
+*.exe
+*.pdb
+
+# Log files
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+*.swp
+*.swo
+*~
+
+# Package manager files
+packages/
+node_modules/
+
+# Test results
+TestResults/
+*.trx
+*.coverage
+
+# Backup files
+*.bak
+*.backup
+
+# Other unnecessary files
+*.ilk
+*.lib
+*.sbr
+*.sdf
+ipch/
