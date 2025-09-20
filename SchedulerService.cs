@@ -173,5 +173,115 @@ namespace Radio.Services
             }
             return summary;
         }
+
+        public List<ScheduledContent> GetTodaySchedule()
+        {
+            DailySchedule today = currentSchedule.GetScheduleForDate(DateTime.Today);
+            return today?.GetSortedContent() ?? new List<ScheduledContent>();
+        }
+
+        public List<DailySchedule> GetSevenDaySchedule()
+        {
+            return currentSchedule.DailySchedules;
+        }
+
+        public ScheduledContent? GetEventById(int id)
+        {
+            for (int i = 0; i < currentSchedule.DailySchedules.Count; i++)
+            {
+                DailySchedule daily = currentSchedule.DailySchedules[i];
+                for (int j = 0; j < daily.Content.Count; j++)
+                {
+                    if (daily.Content[j].Id == id)
+                    {
+                        return daily.Content[j];
+                    }
+                }
+            }
+            return null;
+        }
+
+        public bool RescheduleEvent(int id, DateTime newStartTime)
+        {
+            ScheduledContent? content = GetEventById(id);
+            if (content == null) return false;
+
+            DailySchedule oldDay = currentSchedule.GetScheduleForDate(content.StartTime.Date);
+            oldDay?.Content.Remove(content);
+
+            content.StartTime = newStartTime;
+            currentSchedule.AddContent(content);
+            
+            return true;
+        }
+
+        public bool AddHostToEvent(int id, string hostName)
+        {
+            ScheduledContent? content = GetEventById(id);
+            if (content is LiveSession session)
+            {
+                if (!session.Hosts.Contains(hostName))
+                {
+                    session.Hosts.Add(hostName);
+                    session.DetermineStudio();
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        public bool RemoveHostFromEvent(int id, string hostName)
+        {
+            ScheduledContent? content = GetEventById(id);
+            if (content is LiveSession session)
+            {
+                bool removed = session.Hosts.Remove(hostName);
+                if (removed)
+                {
+                    session.DetermineStudio();
+                }
+                return removed;
+            }
+            return false;
+        }
+
+        public bool AddGuestToEvent(int id, string guestName)
+        {
+            ScheduledContent? content = GetEventById(id);
+            if (content is LiveSession session)
+            {
+                if (!session.Guests.Contains(guestName))
+                {
+                    session.Guests.Add(guestName);
+                    session.DetermineStudio();
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        public bool RemoveGuestFromEvent(int id, string guestName)
+        {
+            ScheduledContent? content = GetEventById(id);
+            if (content is LiveSession session)
+            {
+                bool removed = session.Guests.Remove(guestName);
+                if (removed)
+                {
+                    session.DetermineStudio();
+                }
+                return removed;
+            }
+            return false;
+        }
+
+        public bool DeleteEvent(int id)
+        {
+            ScheduledContent? content = GetEventById(id);
+            if (content == null) return false;
+
+            DailySchedule day = currentSchedule.GetScheduleForDate(content.StartTime.Date);
+            return day?.Content.Remove(content) ?? false;
+        }
     }
 }
