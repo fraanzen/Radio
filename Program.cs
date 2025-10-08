@@ -1,44 +1,51 @@
+using Microsoft.OpenApi.Models;
+using Microsoft.EntityFrameworkCore;
 using Radio.Models;
 using Radio.Services;
 using Radio.Api;
+using Radio.Data;
 
 var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.AddDbContext<RadioDbContext>(options =>
+    options.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection") ?? "Data Source=radio.db"));
+
+builder.Services.AddScoped<SchedulerService>();
+
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen(c =>
+{
+    c.SwaggerDoc("v1", new OpenApiInfo 
+    { 
+        Title = "Radio Station API", 
+        Version = "v1",
+        Description = "API for managing a radio station's schedule"
+    });
+});
+
 var app = builder.Build();
 
-var scheduler = new SchedulerService();
+app.UseSwagger();
+app.UseSwaggerUI(c =>
+{
+    c.SwaggerEndpoint("/swagger/v1/swagger.json", "Radio Station API V1");
+    c.RoutePrefix = "swagger";
+});
 
-scheduler.ScheduleReportage(
-    scheduler.GetDay("today").AddHours(8), 
-    TimeSpan.FromMinutes(30), 
-    "Morning News", 
-    "Local News", 
-    "John Reporter"
-);
+// Initialize database and seed data
+using (var scope = app.Services.CreateScope())
+{
+    var context = scope.ServiceProvider.GetRequiredService<RadioDbContext>();
+    context.Database.EnsureCreated();
 
-scheduler.ScheduleLiveSession(
-    scheduler.GetDay("today").AddHours(7), 
-    TimeSpan.FromHours(1), 
-    "Morning Show", 
-    new List<string> { "Mike Host" }
-);
+    if (!context.ScheduledContents.Any())
+    {
+        var scheduler = scope.ServiceProvider.GetRequiredService<SchedulerService>();
+        scheduler.FillWithMusic();
+    }
+}
 
-scheduler.ScheduleLiveSession(
-    scheduler.GetDay("today").AddHours(16), 
-    TimeSpan.FromHours(2), 
-    "Afternoon Talk", 
-    new List<string> { "Sarah Host", "Bob Host" }
-);
-
-scheduler.ScheduleLiveSession(
-    scheduler.GetDay("sunday").AddHours(10), 
-    TimeSpan.FromHours(2), 
-    "Sunday Brunch Show", 
-    new List<string> { "Alex Host" },
-    new List<string> { "Chef Maria" }
-);
-
-scheduler.FillWithMusic();
-
+// Converts domain model to API response model
 EventResponse ConvertToEventResponse(ScheduledContent content)
 {
     EventResponse response = new EventResponse();
@@ -77,7 +84,7 @@ EventResponse ConvertToEventResponse(ScheduledContent content)
     return response;
 }
 
-app.MapGet("/schedule/today", () =>
+app.MapGet("/schedule/today", (SchedulerService scheduler) =>
 {
     var todayEvents = scheduler.GetTodaySchedule();
     var eventList = new List<EventResponse>();
@@ -90,10 +97,12 @@ app.MapGet("/schedule/today", () =>
     var response = new ScheduleResponse();
     response.Date = DateTime.Today;
     response.Events = eventList;
-    return response;
-});
+    return Results.Ok(response);
+})
+.WithName("GetTodaySchedule")
+.WithDescription("Gets the schedule for today, including all live sessions, reportages, and music content");
 
-app.MapGet("/schedule/week", () =>
+app.MapGet("/schedule/week", (SchedulerService scheduler) =>
 {
     var weekSchedules = scheduler.GetSevenDaySchedule();
     var weekResponse = new List<ScheduleResponse>();
@@ -118,7 +127,7 @@ app.MapGet("/schedule/week", () =>
     return weekResponse;
 });
 
-app.MapGet("/events/{id:int}", (int id) =>
+app.MapGet("/events/{id:int}", (int id, SchedulerService scheduler) =>
 {
     var eventItem = scheduler.GetEventById(id);
     if (eventItem == null)
@@ -129,8 +138,13 @@ app.MapGet("/events/{id:int}", (int id) =>
     return Results.Ok(ConvertToEventResponse(eventItem));
 });
 
-app.MapPost("/events", (EventRequest request) =>
+app.MapPost("/events", (EventRequest request, SchedulerService scheduler) =>
 {
+    if (string.IsNullOrEmpty(request.Type))
+    {
+        return Results.BadRequest("Event type is required");
+    }
+
     if (request.Type == "live")
     {
         List<string>? guests = null;
@@ -144,7 +158,7 @@ app.MapPost("/events", (EventRequest request) =>
             TimeSpan.FromMinutes(request.DurationMinutes),
             request.Title,
             request.Hosts,
-            guests
+            request.Guests != null && request.Guests.Count > 0 ? request.Guests : new List<string>()
         );
         return Results.Ok("Live session created");
     }
@@ -170,7 +184,7 @@ app.MapPost("/events", (EventRequest request) =>
     }
 });
 
-app.MapPost("/events/{id:int}/reschedule", (int id, RescheduleRequest request) =>
+app.MapPost("/events/{id:int}/reschedule", (int id, RescheduleRequest request, SchedulerService scheduler) =>
 {
     bool success = scheduler.RescheduleEvent(id, request.NewStartTime);
     if (success)
@@ -180,7 +194,7 @@ app.MapPost("/events/{id:int}/reschedule", (int id, RescheduleRequest request) =
     return Results.NotFound("Event not found");
 });
 
-app.MapPost("/events/{id:int}/hosts", (int id, HostRequest request) =>
+app.MapPost("/events/{id:int}/hosts", (int id, HostRequest request, SchedulerService scheduler) =>
 {
     bool success = scheduler.AddHostToEvent(id, request.HostName);
     if (success)
@@ -190,7 +204,7 @@ app.MapPost("/events/{id:int}/hosts", (int id, HostRequest request) =>
     return Results.BadRequest("Could not add host");
 });
 
-app.MapPost("/events/{id:int}/hosts/remove", (int id, HostRequest request) =>
+app.MapPost("/events/{id:int}/hosts/remove", (int id, HostRequest request, SchedulerService scheduler) =>
 {
     bool success = scheduler.RemoveHostFromEvent(id, request.HostName);
     if (success)
@@ -200,7 +214,7 @@ app.MapPost("/events/{id:int}/hosts/remove", (int id, HostRequest request) =>
     return Results.BadRequest("Could not remove host");
 });
 
-app.MapPost("/events/{id:int}/guests", (int id, GuestRequest request) =>
+app.MapPost("/events/{id:int}/guests", (int id, GuestRequest request, SchedulerService scheduler) =>
 {
     bool success = scheduler.AddGuestToEvent(id, request.GuestName);
     if (success)
@@ -210,7 +224,7 @@ app.MapPost("/events/{id:int}/guests", (int id, GuestRequest request) =>
     return Results.BadRequest("Could not add guest");
 });
 
-app.MapPost("/events/{id:int}/guests/remove", (int id, GuestRequest request) =>
+app.MapPost("/events/{id:int}/guests/remove", (int id, GuestRequest request, SchedulerService scheduler) =>
 {
     bool success = scheduler.RemoveGuestFromEvent(id, request.GuestName);
     if (success)
@@ -220,7 +234,7 @@ app.MapPost("/events/{id:int}/guests/remove", (int id, GuestRequest request) =>
     return Results.BadRequest("Could not remove guest");
 });
 
-app.MapPost("/events/{id:int}/delete", (int id) =>
+app.MapPost("/events/{id:int}/delete", (int id, SchedulerService scheduler) =>
 {
     bool success = scheduler.DeleteEvent(id);
     if (success)

@@ -1,19 +1,21 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Radio.Models;
+using Radio.Data;
 
 namespace Radio.Services
 {
     public class SchedulerService
     {
-        private WeeklySchedule currentSchedule;
-        private int nextContentId = 1;
+        private readonly RadioDbContext _db;
 
-        public SchedulerService()
+        public SchedulerService(RadioDbContext db)
         {
-            currentSchedule = new WeeklySchedule(DateTime.Today);
+            _db = db;
         }
 
+        // Gets a date based on day name like "today", "monday", etc.
         public DateTime GetDay(string dayName)
         {
             DayOfWeek targetDay = ParseDayName(dayName);
@@ -29,6 +31,7 @@ namespace Radio.Services
             return today.AddDays(daysUntilTarget);
         }
 
+        // Converts day name string to DayOfWeek enum
         private DayOfWeek ParseDayName(string dayName)
         {
             string day = dayName.ToLower();
@@ -45,243 +48,258 @@ namespace Radio.Services
             throw new ArgumentException($"Invalid day name: {dayName}");
         }
 
+        // Creates a reportage event
         public void ScheduleReportage(DateTime startTime, TimeSpan duration, string title, string topic, string reporter)
         {
-            Reportage reportage = new Reportage();
-            reportage.Id = nextContentId++;
-            reportage.Title = title;
-            reportage.StartTime = startTime;
-            reportage.Duration = duration;
-            reportage.Topic = topic;
-            reportage.Reporter = reporter;
+            var dailySchedule = GetOrCreateDailySchedule(startTime.Date);
+            
+            var reportage = new Reportage
+            {
+                Title = title,
+                StartTime = startTime,
+                Duration = duration,
+                Topic = topic,
+                Reporter = reporter,
+                DailyScheduleId = dailySchedule.Id
+            };
 
-            currentSchedule.AddContent(reportage);
+            _db.Reportages.Add(reportage);
+            _db.SaveChanges();
         }
 
-        public void ScheduleLiveSession(DateTime startTime, TimeSpan duration, string title, List<string> hosts, List<string> guests = null)
+        // Creates a live session event
+        public void ScheduleLiveSession(DateTime startTime, TimeSpan duration, string title, List<string> hosts, List<string>? guests = null)
         {
-            LiveSession session = new LiveSession();
-            session.Id = nextContentId++;
-            session.Title = title;
-            session.StartTime = startTime;
-            session.Duration = duration;
-            session.Hosts = hosts ?? new List<string>();
-            session.Guests = guests ?? new List<string>();
+            var dailySchedule = GetOrCreateDailySchedule(startTime.Date);
+            
+            var session = new LiveSession
+            {
+                Title = title,
+                StartTime = startTime,
+                Duration = duration,
+                Hosts = hosts ?? new List<string>(),
+                Guests = guests ?? new List<string>(),
+                DailyScheduleId = dailySchedule.Id
+            };
             
             session.DetermineStudio();
 
-            currentSchedule.AddContent(session);
+            _db.LiveSessions.Add(session);
+            _db.SaveChanges();
         }
 
+        // Fills empty time slots with music for 7 days
         public void FillWithMusic()
         {
-            for (int i = 0; i < currentSchedule.DailySchedules.Count; i++)
+            DateTime today = DateTime.Today;
+            
+            for (int i = 0; i < 7; i++)
             {
-                DailySchedule daily = currentSchedule.DailySchedules[i];
-                FillDayWithMusic(daily);
+                DateTime currentDay = today.AddDays(i);
+                FillDayWithMusic(currentDay);
             }
         }
 
-        private void FillDayWithMusic(DailySchedule daily)
+        // Fills empty time slots with music for a single day
+        private void FillDayWithMusic(DateTime date)
         {
-            DateTime dayStart = daily.Date;
-            DateTime dayEnd = daily.Date.AddDays(1);
-            
-            List<ScheduledContent> sorted = daily.GetSortedContent();
-            
-            if (sorted.Count > 0 && sorted[0].StartTime > dayStart)
+            DateTime dayStart = date.Date;
+            DateTime dayEnd = date.Date.AddDays(1);
+
+            var dayContent = _db.ScheduledContents
+                .Where(c => c.StartTime.Date == date.Date)
+                .OrderBy(c => c.StartTime)
+                .ToList();
+
+            if (dayContent.Count > 0 && dayContent[0].StartTime > dayStart)
             {
-                AddMusicBlock(daily, dayStart, sorted[0].StartTime);
+                AddMusicBlock(dayStart, dayContent[0].StartTime);
             }
-            
-            for (int i = 0; i < sorted.Count - 1; i++)
+
+            for (int i = 0; i < dayContent.Count - 1; i++)
             {
-                if (sorted[i].EndTime < sorted[i + 1].StartTime)
+                if (dayContent[i].EndTime < dayContent[i + 1].StartTime)
                 {
-                    AddMusicBlock(daily, sorted[i].EndTime, sorted[i + 1].StartTime);
+                    AddMusicBlock(dayContent[i].EndTime, dayContent[i + 1].StartTime);
                 }
             }
+
+            if (dayContent.Count > 0 && dayContent[dayContent.Count - 1].EndTime < dayEnd)
+            {
+                AddMusicBlock(dayContent[dayContent.Count - 1].EndTime, dayEnd);
+            }
+
+            if (dayContent.Count == 0)
+            {
+                AddMusicBlock(dayStart, dayEnd);
+            }
+        }
+
+        // Adds a music block between start and end times
+        private void AddMusicBlock(DateTime start, DateTime end)
+        {
+            var dailySchedule = GetOrCreateDailySchedule(start.Date);
             
-            if (sorted.Count > 0 && sorted[sorted.Count - 1].EndTime < dayEnd)
+            var music = new MusicContent
             {
-                AddMusicBlock(daily, sorted[sorted.Count - 1].EndTime, dayEnd);
+                Title = "Music Playlist",
+                StartTime = start,
+                Duration = end - start,
+                Genre = "Mixed",
+                DailyScheduleId = dailySchedule.Id
+            };
+
+            _db.MusicContents.Add(music);
+            _db.SaveChanges();
+        }
+
+        // Gets or creates a DailySchedule for a specific date
+        private DailySchedule GetOrCreateDailySchedule(DateTime date)
+        {
+            var schedule = _db.DailySchedules.FirstOrDefault(ds => ds.Date.Date == date.Date);
+            
+            if (schedule == null)
+            {
+                schedule = new DailySchedule { Date = date.Date };
+                _db.DailySchedules.Add(schedule);
+                _db.SaveChanges();
             }
             
-            if (sorted.Count == 0)
-            {
-                AddMusicBlock(daily, dayStart, dayEnd);
-            }
+            return schedule;
         }
 
-        private void AddMusicBlock(DailySchedule daily, DateTime start, DateTime end)
-        {
-            MusicContent music = new MusicContent();
-            music.Id = nextContentId++;
-            music.Title = "Music Playlist";
-            music.StartTime = start;
-            music.Duration = end - start;
-            music.Genre = "Mixed";
-
-            daily.AddContent(music);
-        }
-
-        public string GetScheduleOverview()
-        {
-            string overview = "Radio Schedule - Week of " + currentSchedule.WeekStartDate.ToString("yyyy-MM-dd") + "\n\n";
-
-            for (int i = 0; i < currentSchedule.DailySchedules.Count; i++)
-            {
-                DailySchedule daily = currentSchedule.DailySchedules[i];
-                overview += daily.Date.ToString("dddd, MMM dd") + ":\n";
-
-                List<ScheduledContent> content = daily.GetSortedContent();
-                for (int j = 0; j < content.Count; j++)
-                {
-                    ScheduledContent item = content[j];
-                    string type = GetContentTypeString(item.ContentType);
-                    overview += "  " + item.StartTime.ToString("HH:mm") + "-" + item.EndTime.ToString("HH:mm") + " " + type + ": " + item.Title + "\n";
-                }
-                overview += "\n";
-            }
-
-            return overview;
-        }
-
-        private string GetContentTypeString(ContentType type)
-        {
-            if (type == ContentType.Music) return "[Music]";
-            if (type == ContentType.Reportage) return "[Reportage]";
-            if (type == ContentType.LiveSession) return "[Live]";
-            return "[Unknown]";
-        }
-
-        public string GetStudioSummary()
-        {
-            string summary = "Studio Assignment Summary:\n";
-            for (int i = 0; i < currentSchedule.DailySchedules.Count; i++)
-            {
-                DailySchedule daily = currentSchedule.DailySchedules[i];
-                for (int j = 0; j < daily.Content.Count; j++)
-                {
-                    if (daily.Content[j] is LiveSession session)
-                    {
-                        string studioInfo = session.Studio == StudioType.Studio1 ? "Studio 1 (cheaper)" : "Studio 2";
-                        string guestInfo = session.HasGuests ? $" + {session.Guests.Count} guest(s)" : "";
-                        summary += $"  {session.Title}: {studioInfo}{guestInfo}\n";
-                    }
-                }
-            }
-            return summary;
-        }
-
+        // Gets all events for today
         public List<ScheduledContent> GetTodaySchedule()
         {
-            DailySchedule today = currentSchedule.GetScheduleForDate(DateTime.Today);
-            return today?.GetSortedContent() ?? new List<ScheduledContent>();
+            DateTime today = DateTime.Today;
+            
+            return _db.ScheduledContents
+                .Where(c => c.StartTime.Date == today)
+                .OrderBy(c => c.StartTime)
+                .ToList();
         }
 
+        // Gets schedule for the next 7 days
         public List<DailySchedule> GetSevenDaySchedule()
         {
-            return currentSchedule.DailySchedules;
+            DateTime today = DateTime.Today;
+            var schedules = new List<DailySchedule>();
+
+            for (int i = 0; i < 7; i++)
+            {
+                DateTime currentDay = today.AddDays(i);
+                
+                var daySchedule = new DailySchedule
+                {
+                    Date = currentDay,
+                    Content = _db.ScheduledContents
+                        .Where(c => c.StartTime.Date == currentDay.Date)
+                        .OrderBy(c => c.StartTime)
+                        .ToList()
+                };
+
+                schedules.Add(daySchedule);
+            }
+
+            return schedules;
         }
 
+        // Gets a specific event by ID
         public ScheduledContent? GetEventById(int id)
         {
-            for (int i = 0; i < currentSchedule.DailySchedules.Count; i++)
-            {
-                DailySchedule daily = currentSchedule.DailySchedules[i];
-                for (int j = 0; j < daily.Content.Count; j++)
-                {
-                    if (daily.Content[j].Id == id)
-                    {
-                        return daily.Content[j];
-                    }
-                }
-            }
-            return null;
+            return _db.ScheduledContents.Find(id);
         }
 
+        // Changes the start time of an event
         public bool RescheduleEvent(int id, DateTime newStartTime)
         {
-            ScheduledContent? content = GetEventById(id);
+            var content = _db.ScheduledContents.Find(id);
             if (content == null) return false;
 
-            DailySchedule oldDay = currentSchedule.GetScheduleForDate(content.StartTime.Date);
-            oldDay?.Content.Remove(content);
-
             content.StartTime = newStartTime;
-            currentSchedule.AddContent(content);
+            _db.SaveChanges();
             
             return true;
         }
 
+        // Adds a host to a live session
         public bool AddHostToEvent(int id, string hostName)
         {
-            ScheduledContent? content = GetEventById(id);
+            var content = _db.ScheduledContents.Find(id);
             if (content is LiveSession session)
             {
                 if (!session.Hosts.Contains(hostName))
                 {
                     session.Hosts.Add(hostName);
                     session.DetermineStudio();
+                    _db.SaveChanges();
                     return true;
                 }
             }
             return false;
         }
 
+        // Removes a host from a live session
         public bool RemoveHostFromEvent(int id, string hostName)
         {
-            ScheduledContent? content = GetEventById(id);
+            var content = _db.ScheduledContents.Find(id);
             if (content is LiveSession session)
             {
                 bool removed = session.Hosts.Remove(hostName);
                 if (removed)
                 {
                     session.DetermineStudio();
+                    _db.SaveChanges();
                 }
                 return removed;
             }
             return false;
         }
 
+        // Adds a guest to a live session
         public bool AddGuestToEvent(int id, string guestName)
         {
-            ScheduledContent? content = GetEventById(id);
+            var content = _db.ScheduledContents.Find(id);
             if (content is LiveSession session)
             {
                 if (!session.Guests.Contains(guestName))
                 {
                     session.Guests.Add(guestName);
                     session.DetermineStudio();
+                    _db.SaveChanges();
                     return true;
                 }
             }
             return false;
         }
 
+        // Removes a guest from a live session
         public bool RemoveGuestFromEvent(int id, string guestName)
         {
-            ScheduledContent? content = GetEventById(id);
+            var content = _db.ScheduledContents.Find(id);
             if (content is LiveSession session)
             {
                 bool removed = session.Guests.Remove(guestName);
                 if (removed)
                 {
                     session.DetermineStudio();
+                    _db.SaveChanges();
                 }
                 return removed;
             }
             return false;
         }
 
+        // Deletes an event from the schedule
         public bool DeleteEvent(int id)
         {
-            ScheduledContent? content = GetEventById(id);
+            var content = _db.ScheduledContents.Find(id);
             if (content == null) return false;
 
-            DailySchedule day = currentSchedule.GetScheduleForDate(content.StartTime.Date);
-            return day?.Content.Remove(content) ?? false;
+            _db.ScheduledContents.Remove(content);
+            _db.SaveChanges();
+            
+            return true;
         }
     }
 }
