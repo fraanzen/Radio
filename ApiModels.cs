@@ -2,49 +2,15 @@ using Radio.Models;
 
 namespace Radio.Api
 {
-    /// <summary>
-    /// Request model for creating a new event in the radio schedule
-    /// </summary>
     public class EventRequest
     {
-        /// <summary>
-        /// Type of event: "live" for live sessions or "reportage" for news/reports
-        /// </summary>
         public string Type { get; set; } = string.Empty;
-
-        /// <summary>
-        /// Start time of the event
-        /// </summary>
         public DateTime StartTime { get; set; }
-
-        /// <summary>
-        /// Duration of the event in minutes
-        /// </summary>
         public int DurationMinutes { get; set; }
-
-        /// <summary>
-        /// Title of the event
-        /// </summary>
         public string Title { get; set; } = string.Empty;
-
-        /// <summary>
-        /// List of hosts for live sessions
-        /// </summary>
         public List<string> Hosts { get; set; } = new List<string>();
-
-        /// <summary>
-        /// List of guests for live sessions (optional)
-        /// </summary>
         public List<string> Guests { get; set; } = new List<string>();
-
-        /// <summary>
-        /// Topic for reportage events
-        /// </summary>
         public string? Topic { get; set; }
-
-        /// <summary>
-        /// Reporter name for reportage events
-        /// </summary>
         public string? Reporter { get; set; }
     }
 
