@@ -48,9 +48,71 @@ namespace Radio.Services
             throw new ArgumentException($"Invalid day name: {dayName}");
         }
 
+        // Removes events (especially music) that conflict with a new event
+        private void RemoveConflictingEvents(DateTime startTime, TimeSpan duration)
+        {
+            DateTime endTime = startTime + duration;
+            
+            var conflictingEvents = _db.ScheduledContents
+                .Where(e => e.StartTime.Date == startTime.Date)
+                .ToList()
+                .Where(e => {
+                    DateTime eventEnd = e.StartTime + e.Duration;
+                    return e.StartTime < endTime && eventEnd > startTime;
+                })
+                .ToList();
+
+            foreach (var conflict in conflictingEvents)
+            {
+                var conflictEnd = conflict.StartTime + conflict.Duration;
+                
+                // Music block completely wraps around the new event
+                if (conflict is MusicContent && conflict.StartTime < startTime && conflictEnd > endTime)
+                {
+                    var beforeDuration = startTime - conflict.StartTime;
+                    var afterStart = endTime;
+                    var afterDuration = conflictEnd - endTime;
+                    
+                    // Shorten the existing music to end when new event starts
+                    conflict.Duration = beforeDuration;
+                    
+                    // Add new music block after the new event
+                    if (afterDuration.TotalMinutes > 0)
+                    {
+                        AddMusicBlock(afterStart, conflictEnd);
+                    }
+                }
+                // Music block starts before and overlaps into new event
+                else if (conflict is MusicContent && conflict.StartTime < startTime && conflictEnd > startTime)
+                {
+                    conflict.Duration = startTime - conflict.StartTime;
+                }
+                // Music block starts during new event and extends past it
+                else if (conflict is MusicContent && conflict.StartTime < endTime && conflictEnd > endTime)
+                {
+                    conflict.StartTime = endTime;
+                    conflict.Duration = conflictEnd - endTime;
+                }
+                // Music block is completely within the new event
+                else if (conflict is MusicContent)
+                {
+                    _db.ScheduledContents.Remove(conflict);
+                }
+                // Non-music events (shouldn't happen, but handle it)
+                else
+                {
+                    _db.ScheduledContents.Remove(conflict);
+                }
+            }
+
+            _db.SaveChanges();
+        }
+
         // Creates a reportage event
         public void ScheduleReportage(DateTime startTime, TimeSpan duration, string title, string topic, string reporter)
         {
+            RemoveConflictingEvents(startTime, duration);
+            
             var dailySchedule = GetOrCreateDailySchedule(startTime.Date);
             
             var reportage = new Reportage
@@ -70,6 +132,8 @@ namespace Radio.Services
         // Creates a live session event
         public void ScheduleLiveSession(DateTime startTime, TimeSpan duration, string title, List<string> hosts, List<string>? guests = null)
         {
+            RemoveConflictingEvents(startTime, duration);
+            
             var dailySchedule = GetOrCreateDailySchedule(startTime.Date);
             
             var session = new LiveSession

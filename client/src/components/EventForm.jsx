@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { createEvent } from "../services/api";
 
 function EventForm() {
   const [eventType, setEventType] = useState("live");
@@ -11,41 +12,54 @@ function EventForm() {
     topic: "",
     reporter: "",
   });
+  const [submitting, setSubmitting] = useState(false);
+  const [message, setMessage] = useState(null);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
+    setSubmitting(true);
+    setMessage(null);
 
-    // For now, just log the data (will connect to API later)
-    const eventData = {
-      type: eventType,
-      title: formData.title,
-      startTime: formData.startTime,
-      durationMinutes: parseInt(formData.durationMinutes),
-    };
+    try {
+      const eventData = {
+        type: eventType,
+        title: formData.title,
+        startTime: formData.startTime,
+        durationMinutes: parseInt(formData.durationMinutes),
+      };
 
-    if (eventType === "live") {
-      eventData.hosts = formData.hosts.split(",").map((h) => h.trim());
-      eventData.guests = formData.guests
-        ? formData.guests.split(",").map((g) => g.trim())
-        : [];
-    } else if (eventType === "reportage") {
-      eventData.topic = formData.topic;
-      eventData.reporter = formData.reporter;
+      if (eventType === "live") {
+        eventData.hosts = formData.hosts.split(",").map((h) => h.trim());
+        eventData.guests = formData.guests
+          ? formData.guests.split(",").map((g) => g.trim())
+          : [];
+      } else if (eventType === "reportage") {
+        eventData.topic = formData.topic;
+        eventData.reporter = formData.reporter;
+      }
+
+      await createEvent(eventData);
+
+      setMessage({ type: "success", text: "Event created successfully!" });
+
+      setFormData({
+        title: "",
+        startTime: "",
+        durationMinutes: 60,
+        hosts: "",
+        guests: "",
+        topic: "",
+        reporter: "",
+      });
+    } catch (error) {
+      setMessage({
+        type: "error",
+        text: "Failed to create event. Make sure the backend is running on http://localhost:5000",
+      });
+      console.error("Error creating event:", error);
+    } finally {
+      setSubmitting(false);
     }
-
-    console.log("Event to create:", eventData);
-    alert("Event created! (Check console for data)");
-
-    // Reset form
-    setFormData({
-      title: "",
-      startTime: "",
-      durationMinutes: 60,
-      hosts: "",
-      guests: "",
-      topic: "",
-      reporter: "",
-    });
   };
 
   const handleChange = (e) => {
@@ -58,6 +72,17 @@ function EventForm() {
   return (
     <div className="container mt-4">
       <h2>Add New Event</h2>
+
+      {message && (
+        <div
+          className={`alert alert-${
+            message.type === "success" ? "success" : "danger"
+          } mt-3`}
+          role="alert"
+        >
+          {message.text}
+        </div>
+      )}
 
       <form onSubmit={handleSubmit} className="mt-4">
         <div className="mb-3">
@@ -212,8 +237,8 @@ function EventForm() {
           </>
         )}
 
-        <button type="submit" className="btn btn-primary">
-          Create Event
+        <button type="submit" className="btn btn-primary" disabled={submitting}>
+          {submitting ? "Creating..." : "Create Event"}
         </button>
       </form>
     </div>

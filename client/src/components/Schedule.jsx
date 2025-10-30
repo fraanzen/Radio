@@ -1,72 +1,29 @@
-import { useState } from "react";
-
-const mockEvents = [
-  {
-    id: 1,
-    type: "live",
-    title: "Morning Show",
-    startTime: "2025-10-28T07:00:00",
-    endTime: "2025-10-28T09:00:00",
-    durationMinutes: 120,
-    hosts: ["Mike Host", "Sarah Co-host"],
-    guests: [],
-    studio: "Studio 2",
-  },
-  {
-    id: 2,
-    type: "reportage",
-    title: "Morning News",
-    startTime: "2025-10-28T09:00:00",
-    endTime: "2025-10-28T09:30:00",
-    durationMinutes: 30,
-    topic: "Local News",
-    reporter: "John Reporter",
-  },
-  {
-    id: 3,
-    type: "music",
-    title: "Music Playlist",
-    startTime: "2025-10-28T09:30:00",
-    endTime: "2025-10-28T12:00:00",
-    durationMinutes: 150,
-    genre: "Mixed",
-  },
-  {
-    id: 4,
-    type: "live",
-    title: "Lunch Talk",
-    startTime: "2025-10-28T12:00:00",
-    endTime: "2025-10-28T13:00:00",
-    durationMinutes: 60,
-    hosts: ["Alex Host"],
-    guests: ["Chef Maria"],
-    studio: "Studio 2",
-  },
-  {
-    id: 5,
-    type: "music",
-    title: "Music Playlist",
-    startTime: "2025-10-28T13:00:00",
-    endTime: "2025-10-28T16:00:00",
-    durationMinutes: 180,
-    genre: "Mixed",
-  },
-  {
-    id: 6,
-    type: "live",
-    title: "Afternoon Drive",
-    startTime: "2025-10-28T16:00:00",
-    endTime: "2025-10-28T18:00:00",
-    durationMinutes: 120,
-    hosts: ["DJ Rocky"],
-    guests: [],
-    studio: "Studio 1",
-  },
-];
+import { useState, useEffect } from "react";
+import { getTodaySchedule } from "../services/api";
 
 function Schedule() {
-  const [events] = useState(mockEvents);
+  const [events, setEvents] = useState([]);
   const [currentDate, setCurrentDate] = useState(new Date());
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    async function fetchSchedule() {
+      try {
+        setLoading(true);
+        setError(null);
+        const scheduleData = await getTodaySchedule();
+        setEvents(scheduleData);
+      } catch (err) {
+        setError("Failed to load schedule. Make sure the backend is running.");
+        console.error("Error fetching schedule:", err);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    fetchSchedule();
+  }, [currentDate]);
 
   const formatTime = (dateString) => {
     const date = new Date(dateString);
@@ -144,6 +101,57 @@ function Schedule() {
     return null;
   };
 
+  const buildHourlySchedule = () => {
+    const hourlySchedule = [];
+
+    for (let hour = 0; hour < 24; hour++) {
+      const hourStart = new Date(currentDate);
+      hourStart.setHours(hour, 0, 0, 0);
+      const hourEnd = new Date(currentDate);
+      hourEnd.setHours(hour, 59, 59, 999);
+
+      const eventsInHour = events.filter((event) => {
+        const eventStart = new Date(event.startTime);
+        const eventEnd = new Date(event.endTime);
+        return eventStart <= hourEnd && eventEnd >= hourStart;
+      });
+
+      hourlySchedule.push({
+        hour,
+        hourLabel: `${hour.toString().padStart(2, "0")}:00`,
+        events: eventsInHour,
+      });
+    }
+
+    return hourlySchedule;
+  };
+
+  const hourlySchedule = buildHourlySchedule();
+
+  if (loading) {
+    return (
+      <div className="container mt-4">
+        <div className="text-center">
+          <div className="spinner-border text-primary" role="status">
+            <span className="visually-hidden">Loading...</span>
+          </div>
+          <p className="mt-2">Loading schedule...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="container mt-4">
+        <div className="alert alert-danger" role="alert">
+          <h4 className="alert-heading">Error</h4>
+          <p>{error}</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="container mt-4">
       <div className="d-flex justify-content-between align-items-center mb-4">
@@ -180,34 +188,71 @@ function Schedule() {
           month: "long",
           day: "numeric",
         })}
+        {currentDate.toDateString() !== new Date().toDateString() && (
+          <span className="badge bg-warning text-dark ms-2">
+            Showing today's schedule (date-specific schedules not yet
+            implemented)
+          </span>
+        )}
       </p>
 
-      <table className="table table-striped table-hover">
+      <table className="table table-bordered table-hover">
         <thead className="table-dark">
           <tr>
-            <th scope="col">Time</th>
-            <th scope="col">Type</th>
-            <th scope="col">Title</th>
-            <th scope="col">Duration</th>
+            <th scope="col" style={{ width: "80px" }}>
+              Hour
+            </th>
+            <th scope="col" style={{ width: "100px" }}>
+              Type
+            </th>
+            <th scope="col">Program</th>
             <th scope="col">Details</th>
           </tr>
         </thead>
         <tbody>
-          {events.map((event) => (
-            <tr key={event.id}>
-              <td className="align-middle">
-                {formatTime(event.startTime)} - {formatTime(event.endTime)}
-              </td>
-              <td className="align-middle">{getEventBadge(event.type)}</td>
-              <td className="align-middle">
-                <strong>{event.title}</strong>
-              </td>
-              <td className="align-middle">{event.durationMinutes} min</td>
-              <td className="align-middle">
-                <small>{getEventDetails(event)}</small>
-              </td>
-            </tr>
-          ))}
+          {hourlySchedule.map((hourSlot) => {
+            const mainEvent = hourSlot.events[0]; // Get the primary event for this hour
+
+            if (!mainEvent) {
+              return (
+                <tr key={hourSlot.hour} className="table-secondary">
+                  <td className="align-middle">
+                    <strong>{hourSlot.hourLabel}</strong>
+                  </td>
+                  <td className="align-middle">
+                    <span className="badge bg-light text-dark">—</span>
+                  </td>
+                  <td className="align-middle text-muted">
+                    <em>No scheduled content</em>
+                  </td>
+                  <td className="align-middle"></td>
+                </tr>
+              );
+            }
+
+            return (
+              <tr key={hourSlot.hour}>
+                <td className="align-middle">
+                  <strong>{hourSlot.hourLabel}</strong>
+                </td>
+                <td className="align-middle">
+                  {getEventBadge(mainEvent.type)}
+                </td>
+                <td className="align-middle">
+                  <strong>{mainEvent.title}</strong>
+                  <br />
+                  <small className="text-muted">
+                    {formatTime(mainEvent.startTime)} -{" "}
+                    {formatTime(mainEvent.endTime)} ({mainEvent.durationMinutes}{" "}
+                    min)
+                  </small>
+                </td>
+                <td className="align-middle">
+                  <small>{getEventDetails(mainEvent)}</small>
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
