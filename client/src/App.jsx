@@ -1,5 +1,4 @@
 import { useState } from "react";
-import "./App.css";
 import Schedule from "./components/Schedule";
 import EventForm from "./components/EventForm";
 
@@ -7,26 +6,34 @@ function App() {
   const [view, setView] = useState("schedule");
 
   return (
-    <div className="app">
-      <header className="app-header">
-        <h1>📻 Radio Station Scheduler</h1>
-        <nav>
-          <button
-            className={view === "schedule" ? "active" : ""}
-            onClick={() => setView("schedule")}
-          >
-            View Schedule
-          </button>
-          <button
-            className={view === "add" ? "active" : ""}
-            onClick={() => setView("add")}
-          >
-            Add Event
-          </button>
-        </nav>
-      </header>
+    <div>
+      <nav className="navbar navbar-expand-lg navbar-dark bg-dark">
+        <div className="container-fluid">
+          <span className="navbar-brand mb-0 h1">
+            📻 Radio Station Scheduler
+          </span>
+          <div className="d-flex">
+            <button
+              className={`btn ${
+                view === "schedule" ? "btn-primary" : "btn-outline-primary"
+              } me-2`}
+              onClick={() => setView("schedule")}
+            >
+              View Schedule
+            </button>
+            <button
+              className={`btn ${
+                view === "add" ? "btn-primary" : "btn-outline-primary"
+              }`}
+              onClick={() => setView("add")}
+            >
+              Add Event
+            </button>
+          </div>
+        </div>
+      </nav>
 
-      <main className="app-main">
+      <main>
         {view === "schedule" && <Schedule />}
         {view === "add" && <EventForm />}
       </main>

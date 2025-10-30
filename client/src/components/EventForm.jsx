@@ -1,5 +1,4 @@
 import { useState } from "react";
-import "./EventForm.css";
 
 function EventForm() {
   const [eventType, setEventType] = useState("live");
@@ -57,38 +56,49 @@ function EventForm() {
   };
 
   return (
-    <div className="event-form">
+    <div className="container mt-4">
       <h2>Add New Event</h2>
 
-      <form onSubmit={handleSubmit}>
-        <div className="form-group">
-          <label>Event Type</label>
-          <div className="radio-group">
-            <label>
+      <form onSubmit={handleSubmit} className="mt-4">
+        <div className="mb-3">
+          <label className="form-label">Event Type</label>
+          <div>
+            <div className="form-check form-check-inline">
               <input
+                className="form-check-input"
                 type="radio"
+                id="typeLive"
                 value="live"
                 checked={eventType === "live"}
                 onChange={(e) => setEventType(e.target.value)}
               />
-              🎙️ Live Session
-            </label>
-            <label>
+              <label className="form-check-label" htmlFor="typeLive">
+                🎙️ Live Session
+              </label>
+            </div>
+            <div className="form-check form-check-inline">
               <input
+                className="form-check-input"
                 type="radio"
+                id="typeReportage"
                 value="reportage"
                 checked={eventType === "reportage"}
                 onChange={(e) => setEventType(e.target.value)}
               />
-              📰 Reportage
-            </label>
+              <label className="form-check-label" htmlFor="typeReportage">
+                📰 Reportage
+              </label>
+            </div>
           </div>
         </div>
 
-        <div className="form-group">
-          <label htmlFor="title">Title *</label>
+        <div className="mb-3">
+          <label htmlFor="title" className="form-label">
+            Title *
+          </label>
           <input
             type="text"
+            className="form-control"
             id="title"
             name="title"
             value={formData.title}
@@ -98,11 +108,14 @@ function EventForm() {
           />
         </div>
 
-        <div className="form-row">
-          <div className="form-group">
-            <label htmlFor="startTime">Start Time *</label>
+        <div className="row">
+          <div className="col-md-6 mb-3">
+            <label htmlFor="startTime" className="form-label">
+              Start Time *
+            </label>
             <input
               type="datetime-local"
+              className="form-control"
               id="startTime"
               name="startTime"
               value={formData.startTime}
@@ -111,10 +124,13 @@ function EventForm() {
             />
           </div>
 
-          <div className="form-group">
-            <label htmlFor="durationMinutes">Duration (minutes) *</label>
+          <div className="col-md-6 mb-3">
+            <label htmlFor="durationMinutes" className="form-label">
+              Duration (minutes) *
+            </label>
             <input
               type="number"
+              className="form-control"
               id="durationMinutes"
               name="durationMinutes"
               value={formData.durationMinutes}
@@ -127,10 +143,13 @@ function EventForm() {
 
         {eventType === "live" && (
           <>
-            <div className="form-group">
-              <label htmlFor="hosts">Hosts * (comma-separated)</label>
+            <div className="mb-3">
+              <label htmlFor="hosts" className="form-label">
+                Hosts * (comma-separated)
+              </label>
               <input
                 type="text"
+                className="form-control"
                 id="hosts"
                 name="hosts"
                 value={formData.hosts}
@@ -140,10 +159,13 @@ function EventForm() {
               />
             </div>
 
-            <div className="form-group">
-              <label htmlFor="guests">Guests (comma-separated, optional)</label>
+            <div className="mb-3">
+              <label htmlFor="guests" className="form-label">
+                Guests (comma-separated, optional)
+              </label>
               <input
                 type="text"
+                className="form-control"
                 id="guests"
                 name="guests"
                 value={formData.guests}
@@ -156,10 +178,13 @@ function EventForm() {
 
         {eventType === "reportage" && (
           <>
-            <div className="form-group">
-              <label htmlFor="topic">Topic *</label>
+            <div className="mb-3">
+              <label htmlFor="topic" className="form-label">
+                Topic *
+              </label>
               <input
                 type="text"
+                className="form-control"
                 id="topic"
                 name="topic"
                 value={formData.topic}
@@ -169,10 +194,13 @@ function EventForm() {
               />
             </div>
 
-            <div className="form-group">
-              <label htmlFor="reporter">Reporter *</label>
+            <div className="mb-3">
+              <label htmlFor="reporter" className="form-label">
+                Reporter *
+              </label>
               <input
                 type="text"
+                className="form-control"
                 id="reporter"
                 name="reporter"
                 value={formData.reporter}
@@ -184,7 +212,7 @@ function EventForm() {
           </>
         )}
 
-        <button type="submit" className="submit-button">
+        <button type="submit" className="btn btn-primary">
           Create Event
         </button>
       </form>

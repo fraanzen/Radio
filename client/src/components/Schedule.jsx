@@ -1,7 +1,5 @@
 import { useState } from "react";
-import "./Schedule.css";
 
-// Hardcoded data matching backend structure
 const mockEvents = [
   {
     id: 1,
@@ -68,6 +66,7 @@ const mockEvents = [
 
 function Schedule() {
   const [events] = useState(mockEvents);
+  const [currentDate, setCurrentDate] = useState(new Date());
 
   const formatTime = (dateString) => {
     const date = new Date(dateString);
@@ -78,24 +77,104 @@ function Schedule() {
     });
   };
 
-  const getEventIcon = (type) => {
+  const goToPreviousDay = () => {
+    const newDate = new Date(currentDate);
+    newDate.setDate(newDate.getDate() - 1);
+    setCurrentDate(newDate);
+  };
+
+  const goToNextDay = () => {
+    const newDate = new Date(currentDate);
+    newDate.setDate(newDate.getDate() + 1);
+    setCurrentDate(newDate);
+  };
+
+  const goToToday = () => {
+    setCurrentDate(new Date());
+  };
+
+  const getEventBadge = (type) => {
     switch (type) {
       case "live":
-        return "🎙️";
+        return <span className="badge bg-danger">🎙️ Live</span>;
       case "reportage":
-        return "📰";
+        return <span className="badge bg-info">📰 Reportage</span>;
       case "music":
-        return "🎵";
+        return <span className="badge bg-success">🎵 Music</span>;
       default:
-        return "📻";
+        return <span className="badge bg-secondary">📻 Event</span>;
     }
   };
 
+  const getEventDetails = (event) => {
+    if (event.type === "live") {
+      return (
+        <>
+          <div>
+            <strong>Hosts:</strong> {event.hosts.join(", ")}
+          </div>
+          {event.guests && event.guests.length > 0 && (
+            <div>
+              <strong>Guests:</strong> {event.guests.join(", ")}
+            </div>
+          )}
+          <div>
+            <strong>Studio:</strong> {event.studio}
+          </div>
+        </>
+      );
+    } else if (event.type === "reportage") {
+      return (
+        <>
+          <div>
+            <strong>Topic:</strong> {event.topic}
+          </div>
+          <div>
+            <strong>Reporter:</strong> {event.reporter}
+          </div>
+        </>
+      );
+    } else if (event.type === "music") {
+      return (
+        <div>
+          <strong>Genre:</strong> {event.genre}
+        </div>
+      );
+    }
+    return null;
+  };
+
   return (
-    <div className="schedule">
-      <h2>Today's Schedule</h2>
-      <p className="schedule-date">
-        {new Date().toLocaleDateString("en-US", {
+    <div className="container mt-4">
+      <div className="d-flex justify-content-between align-items-center mb-4">
+        <h2>Schedule</h2>
+        <div className="btn-group" role="group">
+          <button
+            className="btn btn-outline-secondary"
+            onClick={goToPreviousDay}
+            title="Previous Day"
+          >
+            ← Previous
+          </button>
+          <button
+            className="btn btn-outline-primary"
+            onClick={goToToday}
+            title="Go to Today"
+          >
+            Today
+          </button>
+          <button
+            className="btn btn-outline-secondary"
+            onClick={goToNextDay}
+            title="Next Day"
+          >
+            Next →
+          </button>
+        </div>
+      </div>
+
+      <p className="text-muted">
+        {currentDate.toLocaleDateString("en-US", {
           weekday: "long",
           year: "numeric",
           month: "long",
@@ -103,58 +182,34 @@ function Schedule() {
         })}
       </p>
 
-      <div className="timeline">
-        {events.map((event) => (
-          <div key={event.id} className={`event-card ${event.type}`}>
-            <div className="event-time">
-              <span className="event-icon">{getEventIcon(event.type)}</span>
-              <span className="time-range">
+      <table className="table table-striped table-hover">
+        <thead className="table-dark">
+          <tr>
+            <th scope="col">Time</th>
+            <th scope="col">Type</th>
+            <th scope="col">Title</th>
+            <th scope="col">Duration</th>
+            <th scope="col">Details</th>
+          </tr>
+        </thead>
+        <tbody>
+          {events.map((event) => (
+            <tr key={event.id}>
+              <td className="align-middle">
                 {formatTime(event.startTime)} - {formatTime(event.endTime)}
-              </span>
-              <span className="duration">{event.durationMinutes} min</span>
-            </div>
-
-            <div className="event-content">
-              <h3>{event.title}</h3>
-
-              {event.type === "live" && (
-                <div className="event-details">
-                  <p>
-                    <strong>Hosts:</strong> {event.hosts.join(", ")}
-                  </p>
-                  {event.guests && event.guests.length > 0 && (
-                    <p>
-                      <strong>Guests:</strong> {event.guests.join(", ")}
-                    </p>
-                  )}
-                  <p>
-                    <strong>Studio:</strong> {event.studio}
-                  </p>
-                </div>
-              )}
-
-              {event.type === "reportage" && (
-                <div className="event-details">
-                  <p>
-                    <strong>Topic:</strong> {event.topic}
-                  </p>
-                  <p>
-                    <strong>Reporter:</strong> {event.reporter}
-                  </p>
-                </div>
-              )}
-
-              {event.type === "music" && (
-                <div className="event-details">
-                  <p>
-                    <strong>Genre:</strong> {event.genre}
-                  </p>
-                </div>
-              )}
-            </div>
-          </div>
-        ))}
-      </div>
+              </td>
+              <td className="align-middle">{getEventBadge(event.type)}</td>
+              <td className="align-middle">
+                <strong>{event.title}</strong>
+              </td>
+              <td className="align-middle">{event.durationMinutes} min</td>
+              <td className="align-middle">
+                <small>{getEventDetails(event)}</small>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
