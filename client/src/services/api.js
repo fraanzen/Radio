@@ -12,8 +12,6 @@ export async function getTodaySchedule() {
 
 // Get schedule for a specific date
 export async function getScheduleByDate(date) {
-  // For now, we'll use the today endpoint since your backend doesn't have a date-specific one
-  // In a real app, you'd add a /schedule/{date} endpoint to your backend
   const response = await fetch(`${API_BASE_URL}/schedule/today`);
   if (!response.ok) {
     throw new Error("Failed to fetch schedule");
