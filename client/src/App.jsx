@@ -15,7 +15,7 @@ function App() {
             style={{ cursor: "pointer" }}
             onClick={() => setView("home")}
           >
-            📻 Radio Station
+            Radio Station FM
           </span>
           <div className="d-flex">
             <button
