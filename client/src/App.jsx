@@ -95,6 +95,8 @@ function App() {
             )}
           </div>
         </div>
+      </nav>
+
       <main>
         {view === "home" && <Home />}
         {view === "schedule" && <Schedule />}
@@ -116,8 +118,6 @@ function App() {
           </div>
         ) : null}
         {view === "login" && <Login onLoginSuccess={handleLoginSuccess} />}
-        {view === "profile" && user && <ContributorProfile />}
-      </main> === "login" && <Login onLoginSuccess={handleLoginSuccess} />}
         {view === "profile" && user && <ContributorProfile />}
       </main>
     </div>
