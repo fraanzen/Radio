@@ -1,6 +1,13 @@
 using Microsoft.OpenApi.Models;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.IdentityModel.Tokens;
+using System.Text;
+using System.Security.Claims;
+using System.IdentityModel.Tokens.Jwt;
 using Radio.Models;
+using Radio.Models.DTOs;
 using Radio.Services;
 using Radio.Api;
 using Radio.Data;
@@ -13,14 +20,55 @@ builder.Services.AddCors(options =>
     {
         policy.WithOrigins("http://localhost:5173", "http://localhost:5174")
               .AllowAnyMethod()
-              .AllowAnyHeader();
+              .AllowAnyHeader()
+              .AllowCredentials();
     });
 });
 
 builder.Services.AddDbContext<RadioDbContext>(options =>
     options.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection") ?? "Data Source=radio.db"));
 
+// Add Identity
+builder.Services.AddIdentity<IdentityUser, IdentityRole>(options =>
+{
+    options.Password.RequireDigit = true;
+    options.Password.RequireLowercase = true;
+    options.Password.RequireUppercase = true;
+    options.Password.RequireNonAlphanumeric = false;
+    options.Password.RequiredLength = 6;
+    options.User.RequireUniqueEmail = true;
+})
+.AddEntityFrameworkStores<RadioDbContext>()
+.AddDefaultTokenProviders();
+
+// Add JWT Authentication
+var jwtKey = builder.Configuration["Jwt:Key"] ?? "YourSuperSecretKeyForJWTTokenGeneration12345!";
+var jwtIssuer = builder.Configuration["Jwt:Issuer"] ?? "RadioStationAPI";
+var jwtAudience = builder.Configuration["Jwt:Audience"] ?? "RadioStationClient";
+
+builder.Services.AddAuthentication(options =>
+{
+    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+})
+.AddJwtBearer(options =>
+{
+    options.TokenValidationParameters = new TokenValidationParameters
+    {
+        ValidateIssuer = true,
+        ValidateAudience = true,
+        ValidateLifetime = true,
+        ValidateIssuerSigningKey = true,
+        ValidIssuer = jwtIssuer,
+        ValidAudience = jwtAudience,
+        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey))
+    };
+});
+
+builder.Services.AddAuthorization();
+
 builder.Services.AddScoped<SchedulerService>();
+builder.Services.AddScoped<ContributorRepository>();
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
@@ -29,13 +77,41 @@ builder.Services.AddSwaggerGen(c =>
     { 
         Title = "Radio Station API", 
         Version = "v1",
-        Description = "API for managing a radio station's schedule"
+        Description = "API for managing a radio station's schedule and contributors"
+    });
+    
+    // Add JWT Authentication to Swagger
+    c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    {
+        Description = "JWT Authorization header using the Bearer scheme. Enter 'Bearer' [space] and then your token.",
+        Name = "Authorization",
+        In = ParameterLocation.Header,
+        Type = SecuritySchemeType.ApiKey,
+        Scheme = "Bearer"
+    });
+    
+    c.AddSecurityRequirement(new OpenApiSecurityRequirement
+    {
+        {
+            new OpenApiSecurityScheme
+            {
+                Reference = new OpenApiReference
+                {
+                    Type = ReferenceType.SecurityScheme,
+                    Id = "Bearer"
+                }
+            },
+            Array.Empty<string>()
+        }
     });
 });
 
 var app = builder.Build();
 
 app.UseCors("AllowReactApp");
+
+app.UseAuthentication();
+app.UseAuthorization();
 
 app.UseSwagger();
 app.UseSwaggerUI(c =>
@@ -48,7 +124,38 @@ app.UseSwaggerUI(c =>
 using (var scope = app.Services.CreateScope())
 {
     var context = scope.ServiceProvider.GetRequiredService<RadioDbContext>();
+    var userManager = scope.ServiceProvider.GetRequiredService<UserManager<IdentityUser>>();
+    var roleManager = scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole>>();
+    
     context.Database.EnsureCreated();
+
+    // Create roles if they don't exist
+    if (!await roleManager.RoleExistsAsync("Admin"))
+    {
+        await roleManager.CreateAsync(new IdentityRole("Admin"));
+    }
+    if (!await roleManager.RoleExistsAsync("Contributor"))
+    {
+        await roleManager.CreateAsync(new IdentityRole("Contributor"));
+    }
+
+    // Create default admin user
+    var adminEmail = "admin@radiostation.com";
+    if (await userManager.FindByEmailAsync(adminEmail) == null)
+    {
+        var adminUser = new IdentityUser
+        {
+            UserName = adminEmail,
+            Email = adminEmail,
+            EmailConfirmed = true
+        };
+        
+        var result = await userManager.CreateAsync(adminUser, "Admin123!");
+        if (result.Succeeded)
+        {
+            await userManager.AddToRoleAsync(adminUser, "Admin");
+        }
+    }
 
     if (!context.ScheduledContents.Any())
     {
@@ -95,6 +202,461 @@ EventResponse ConvertToEventResponse(ScheduledContent content)
 
     return response;
 }
+
+// Helper method to generate JWT token
+string GenerateJwtToken(IdentityUser user, IList<string> roles)
+{
+    var claims = new List<Claim>
+    {
+        new Claim(ClaimTypes.NameIdentifier, user.Id),
+        new Claim(ClaimTypes.Email, user.Email!),
+        new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
+    };
+
+    foreach (var role in roles)
+    {
+        claims.Add(new Claim(ClaimTypes.Role, role));
+    }
+
+    var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey));
+    var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+
+    var token = new JwtSecurityToken(
+        issuer: jwtIssuer,
+        audience: jwtAudience,
+        claims: claims,
+        expires: DateTime.Now.AddDays(7),
+        signingCredentials: creds
+    );
+
+    return new JwtSecurityTokenHandler().WriteToken(token);
+}
+
+// ===== AUTHENTICATION ENDPOINTS =====
+
+app.MapPost("/auth/login", async (LoginDto loginDto, UserManager<IdentityUser> userManager, ContributorRepository contributorRepo) =>
+{
+    var user = await userManager.FindByEmailAsync(loginDto.Email);
+    if (user == null || !await userManager.CheckPasswordAsync(user, loginDto.Password))
+    {
+        return Results.Unauthorized();
+    }
+
+    var roles = await userManager.GetRolesAsync(user);
+    var token = GenerateJwtToken(user, roles);
+    
+    var contributor = await contributorRepo.GetByUserIdAsync(user.Id);
+
+    return Results.Ok(new AuthResponseDto
+    {
+        Token = token,
+        Email = user.Email!,
+        UserId = user.Id,
+        Roles = roles.ToList(),
+        ContributorId = contributor?.Id
+    });
+})
+.WithName("Login")
+.WithDescription("Authenticate user and get JWT token");
+
+app.MapPost("/auth/register", async (RegisterDto registerDto, UserManager<IdentityUser> userManager, ContributorRepository contributorRepo) =>
+{
+    var existingUser = await userManager.FindByEmailAsync(registerDto.Email);
+    if (existingUser != null)
+    {
+        return Results.BadRequest(new { error = "Email already registered" });
+    }
+
+    var user = new IdentityUser
+    {
+        UserName = registerDto.Email,
+        Email = registerDto.Email,
+        EmailConfirmed = true
+    };
+
+    var result = await userManager.CreateAsync(user, registerDto.Password);
+    if (!result.Succeeded)
+    {
+        return Results.BadRequest(new { errors = result.Errors });
+    }
+
+    await userManager.AddToRoleAsync(user, "Contributor");
+
+    var contributor = new Contributor
+    {
+        UserId = user.Id,
+        Email = registerDto.Email,
+        FirstName = registerDto.FirstName,
+        LastName = registerDto.LastName,
+        PhoneNumber = registerDto.PhoneNumber,
+        Address = registerDto.Address,
+        PhotoUrl = registerDto.PhotoUrl,
+        Biography = registerDto.Biography
+    };
+
+    await contributorRepo.CreateAsync(contributor);
+
+    var roles = await userManager.GetRolesAsync(user);
+    var token = GenerateJwtToken(user, roles);
+
+    return Results.Ok(new AuthResponseDto
+    {
+        Token = token,
+        Email = user.Email,
+        UserId = user.Id,
+        Roles = roles.ToList(),
+        ContributorId = contributor.Id
+    });
+})
+.WithName("Register")
+.WithDescription("Register new contributor");
+
+// ===== CONTRIBUTOR ENDPOINTS =====
+
+// Get all contributors (Admin only)
+app.MapGet("/contributors", async (ContributorRepository repo) =>
+{
+    var contributors = await repo.GetAllAsync();
+    var dtos = contributors.Select(c => new ContributorDto
+    {
+        Id = c.Id,
+        FirstName = c.FirstName,
+        LastName = c.LastName,
+        FullName = c.FullName,
+        Email = c.Email,
+        PhoneNumber = c.PhoneNumber,
+        Address = c.Address,
+        PhotoUrl = c.PhotoUrl,
+        Biography = c.Biography,
+        UserId = c.UserId,
+        CreatedAt = c.CreatedAt,
+        UpdatedAt = c.UpdatedAt
+    }).ToList();
+    
+    return Results.Ok(dtos);
+})
+.RequireAuthorization(policy => policy.RequireRole("Admin"))
+.WithName("GetAllContributors");
+
+// Get contributor by ID (Admin or own contributor)
+app.MapGet("/contributors/{id:int}", async (int id, HttpContext context, ContributorRepository repo) =>
+{
+    var contributor = await repo.GetByIdAsync(id);
+    if (contributor == null)
+    {
+        return Results.NotFound();
+    }
+
+    var userId = context.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+    var isAdmin = context.User.IsInRole("Admin");
+    
+    if (!isAdmin && contributor.UserId != userId)
+    {
+        return Results.Forbid();
+    }
+
+    var dto = new ContributorDetailDto
+    {
+        Id = contributor.Id,
+        FirstName = contributor.FirstName,
+        LastName = contributor.LastName,
+        FullName = contributor.FullName,
+        Email = contributor.Email,
+        PhoneNumber = contributor.PhoneNumber,
+        Address = contributor.Address,
+        PhotoUrl = contributor.PhotoUrl,
+        Biography = contributor.Biography,
+        UserId = contributor.UserId,
+        CreatedAt = contributor.CreatedAt,
+        UpdatedAt = contributor.UpdatedAt,
+        PaymentHistory = contributor.PaymentHistory.Select(p => new PaymentRecordDto
+        {
+            Id = p.Id,
+            Year = p.Year,
+            Month = p.Month,
+            TotalHours = p.TotalHours,
+            TotalEvents = p.TotalEvents,
+            SubtotalAmount = p.SubtotalAmount,
+            VatAmount = p.VatAmount,
+            TotalAmount = p.TotalAmount,
+            GeneratedAt = p.GeneratedAt,
+            IsPaid = p.IsPaid,
+            PaidAt = p.PaidAt
+        }).ToList(),
+        RecentAssignments = contributor.Assignments.OrderByDescending(a => a.AssignedAt).Take(10).Select(a => new AssignmentDto
+        {
+            Id = a.Id,
+            ContributorId = a.ContributorId,
+            ContributorName = contributor.FullName,
+            ScheduledContentId = a.ScheduledContentId,
+            ContentTitle = a.ScheduledContent?.Title ?? "",
+            ContentStartTime = a.ScheduledContent?.StartTime ?? DateTime.MinValue,
+            ContentDuration = a.ScheduledContent?.Duration ?? TimeSpan.Zero,
+            Role = a.Role.ToString(),
+            AssignedAt = a.AssignedAt
+        }).ToList()
+    };
+
+    return Results.Ok(dto);
+})
+.RequireAuthorization()
+.WithName("GetContributorById");
+
+// Get current contributor profile
+app.MapGet("/contributors/me", async (HttpContext context, ContributorRepository repo) =>
+{
+    var userId = context.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+    if (userId == null)
+    {
+        return Results.Unauthorized();
+    }
+
+    var contributor = await repo.GetByUserIdAsync(userId);
+    if (contributor == null)
+    {
+        return Results.NotFound(new { error = "Contributor profile not found" });
+    }
+
+    var dto = new ContributorDetailDto
+    {
+        Id = contributor.Id,
+        FirstName = contributor.FirstName,
+        LastName = contributor.LastName,
+        FullName = contributor.FullName,
+        Email = contributor.Email,
+        PhoneNumber = contributor.PhoneNumber,
+        Address = contributor.Address,
+        PhotoUrl = contributor.PhotoUrl,
+        Biography = contributor.Biography,
+        UserId = contributor.UserId,
+        CreatedAt = contributor.CreatedAt,
+        UpdatedAt = contributor.UpdatedAt,
+        PaymentHistory = contributor.PaymentHistory.OrderByDescending(p => p.Year).ThenByDescending(p => p.Month).Select(p => new PaymentRecordDto
+        {
+            Id = p.Id,
+            Year = p.Year,
+            Month = p.Month,
+            TotalHours = p.TotalHours,
+            TotalEvents = p.TotalEvents,
+            SubtotalAmount = p.SubtotalAmount,
+            VatAmount = p.VatAmount,
+            TotalAmount = p.TotalAmount,
+            GeneratedAt = p.GeneratedAt,
+            IsPaid = p.IsPaid,
+            PaidAt = p.PaidAt
+        }).ToList(),
+        RecentAssignments = contributor.Assignments.OrderByDescending(a => a.AssignedAt).Take(20).Select(a => new AssignmentDto
+        {
+            Id = a.Id,
+            ContributorId = a.ContributorId,
+            ContributorName = contributor.FullName,
+            ScheduledContentId = a.ScheduledContentId,
+            ContentTitle = a.ScheduledContent?.Title ?? "",
+            ContentStartTime = a.ScheduledContent?.StartTime ?? DateTime.MinValue,
+            ContentDuration = a.ScheduledContent?.Duration ?? TimeSpan.Zero,
+            Role = a.Role.ToString(),
+            AssignedAt = a.AssignedAt
+        }).ToList()
+    };
+
+    return Results.Ok(dto);
+})
+.RequireAuthorization(policy => policy.RequireRole("Contributor"))
+.WithName("GetMyProfile");
+
+// Create contributor (Admin only)
+app.MapPost("/contributors", async (CreateContributorDto dto, UserManager<IdentityUser> userManager, ContributorRepository repo) =>
+{
+    var existingUser = await userManager.FindByEmailAsync(dto.Email);
+    if (existingUser != null)
+    {
+        return Results.BadRequest(new { error = "Email already registered" });
+    }
+
+    var user = new IdentityUser
+    {
+        UserName = dto.Email,
+        Email = dto.Email,
+        EmailConfirmed = true
+    };
+
+    var result = await userManager.CreateAsync(user, dto.Password);
+    if (!result.Succeeded)
+    {
+        return Results.BadRequest(new { errors = result.Errors });
+    }
+
+    await userManager.AddToRoleAsync(user, "Contributor");
+
+    var contributor = new Contributor
+    {
+        UserId = user.Id,
+        Email = dto.Email,
+        FirstName = dto.FirstName,
+        LastName = dto.LastName,
+        PhoneNumber = dto.PhoneNumber,
+        Address = dto.Address,
+        PhotoUrl = dto.PhotoUrl,
+        Biography = dto.Biography
+    };
+
+    await repo.CreateAsync(contributor);
+
+    return Results.Created($"/contributors/{contributor.Id}", new ContributorDto
+    {
+        Id = contributor.Id,
+        FirstName = contributor.FirstName,
+        LastName = contributor.LastName,
+        FullName = contributor.FullName,
+        Email = contributor.Email,
+        PhoneNumber = contributor.PhoneNumber,
+        Address = contributor.Address,
+        PhotoUrl = contributor.PhotoUrl,
+        Biography = contributor.Biography,
+        UserId = contributor.UserId,
+        CreatedAt = contributor.CreatedAt
+    });
+})
+.RequireAuthorization(policy => policy.RequireRole("Admin"))
+.WithName("CreateContributor");
+
+// Update contributor (Admin or own contributor)
+app.MapPut("/contributors/{id:int}", async (int id, UpdateContributorDto dto, HttpContext context, ContributorRepository repo) =>
+{
+    var contributor = await repo.GetByIdAsync(id);
+    if (contributor == null)
+    {
+        return Results.NotFound();
+    }
+
+    var userId = context.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+    var isAdmin = context.User.IsInRole("Admin");
+    
+    if (!isAdmin && contributor.UserId != userId)
+    {
+        return Results.Forbid();
+    }
+
+    if (!string.IsNullOrEmpty(dto.FirstName)) contributor.FirstName = dto.FirstName;
+    if (!string.IsNullOrEmpty(dto.LastName)) contributor.LastName = dto.LastName;
+    if (!string.IsNullOrEmpty(dto.PhoneNumber)) contributor.PhoneNumber = dto.PhoneNumber;
+    if (!string.IsNullOrEmpty(dto.Address)) contributor.Address = dto.Address;
+    if (dto.PhotoUrl != null) contributor.PhotoUrl = dto.PhotoUrl;
+    if (dto.Biography != null) contributor.Biography = dto.Biography;
+
+    await repo.UpdateAsync(contributor);
+
+    return Results.Ok(new ContributorDto
+    {
+        Id = contributor.Id,
+        FirstName = contributor.FirstName,
+        LastName = contributor.LastName,
+        FullName = contributor.FullName,
+        Email = contributor.Email,
+        PhoneNumber = contributor.PhoneNumber,
+        Address = contributor.Address,
+        PhotoUrl = contributor.PhotoUrl,
+        Biography = contributor.Biography,
+        UserId = contributor.UserId,
+        CreatedAt = contributor.CreatedAt,
+        UpdatedAt = contributor.UpdatedAt
+    });
+})
+.RequireAuthorization()
+.WithName("UpdateContributor");
+
+// Delete contributor (Admin only)
+app.MapDelete("/contributors/{id:int}", async (int id, UserManager<IdentityUser> userManager, ContributorRepository repo) =>
+{
+    var contributor = await repo.GetByIdAsync(id);
+    if (contributor == null)
+    {
+        return Results.NotFound();
+    }
+
+    var user = await userManager.FindByIdAsync(contributor.UserId);
+    if (user != null)
+    {
+        await userManager.DeleteAsync(user);
+    }
+
+    await repo.DeleteAsync(id);
+    return Results.NoContent();
+})
+.RequireAuthorization(policy => policy.RequireRole("Admin"))
+.WithName("DeleteContributor");
+
+// Generate payment for contributor (Admin only)
+app.MapPost("/contributors/{id:int}/payments/{year:int}/{month:int}", async (int id, int year, int month, ContributorRepository repo) =>
+{
+    var contributor = await repo.GetByIdAsync(id);
+    if (contributor == null)
+    {
+        return Results.NotFound();
+    }
+
+    var payment = await repo.GenerateMonthlyPaymentAsync(id, year, month);
+    
+    return Results.Ok(new PaymentRecordDto
+    {
+        Id = payment.Id,
+        Year = payment.Year,
+        Month = payment.Month,
+        TotalHours = payment.TotalHours,
+        TotalEvents = payment.TotalEvents,
+        SubtotalAmount = payment.SubtotalAmount,
+        VatAmount = payment.VatAmount,
+        TotalAmount = payment.TotalAmount,
+        GeneratedAt = payment.GeneratedAt,
+        IsPaid = payment.IsPaid,
+        PaidAt = payment.PaidAt
+    });
+})
+.RequireAuthorization(policy => policy.RequireRole("Admin"))
+.WithName("GeneratePayment");
+
+// Mark payment as paid (Admin only)
+app.MapPost("/payments/{id:int}/mark-paid", async (int id, ContributorRepository repo) =>
+{
+    await repo.MarkPaymentAsPaidAsync(id);
+    return Results.Ok(new { message = "Payment marked as paid" });
+})
+.RequireAuthorization(policy => policy.RequireRole("Admin"))
+.WithName("MarkPaymentPaid");
+
+// Assign contributor to content (Admin only)
+app.MapPost("/assignments", async (CreateAssignmentDto dto, ContributorRepository repo) =>
+{
+    if (!Enum.TryParse<ContributorRole>(dto.Role, true, out var role))
+    {
+        return Results.BadRequest(new { error = "Invalid role. Must be Host, CoHost, Guest, or Reporter" });
+    }
+
+    var assignment = await repo.AssignToContentAsync(dto.ContributorId, dto.ScheduledContentId, role);
+    
+    return Results.Created($"/assignments/{assignment.Id}", new AssignmentDto
+    {
+        Id = assignment.Id,
+        ContributorId = assignment.ContributorId,
+        ScheduledContentId = assignment.ScheduledContentId,
+        Role = assignment.Role.ToString(),
+        AssignedAt = assignment.AssignedAt
+    });
+})
+.RequireAuthorization(policy => policy.RequireRole("Admin"))
+.WithName("CreateAssignment");
+
+// Remove assignment (Admin only)
+app.MapDelete("/assignments/{id:int}", async (int id, ContributorRepository repo) =>
+{
+    await repo.RemoveAssignmentAsync(id);
+    return Results.NoContent();
+})
+.RequireAuthorization(policy => policy.RequireRole("Admin"))
+.WithName("DeleteAssignment");
+
+// ===== SCHEDULE ENDPOINTS =====
+
 
 app.MapGet("/schedule/today", (SchedulerService scheduler) =>
 {
