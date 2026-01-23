@@ -4,6 +4,8 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
+using Azure.AI.OpenAI;
+using OpenAI.Chat;
 using System.Security.Claims;
 using System.IdentityModel.Tokens.Jwt;
 using Radio.Models;
@@ -154,6 +156,38 @@ using (var scope = app.Services.CreateScope())
         if (result.Succeeded)
         {
             await userManager.AddToRoleAsync(adminUser, "Admin");
+        }
+    }
+
+    // Create default contributor user
+    var contributorRepo = scope.ServiceProvider.GetRequiredService<ContributorRepository>();
+    var contributorEmail = "dj@radiostation.com";
+    if (await userManager.FindByEmailAsync(contributorEmail) == null)
+    {
+        var contributorUser = new IdentityUser
+        {
+            UserName = contributorEmail,
+            Email = contributorEmail,
+            EmailConfirmed = true
+        };
+        
+        var result = await userManager.CreateAsync(contributorUser, "Dj123456!");
+        if (result.Succeeded)
+        {
+            await userManager.AddToRoleAsync(contributorUser, "Contributor");
+            
+            // Create contributor profile
+            var contributor = new Contributor
+            {
+                FirstName = "Alex",
+                LastName = "Johnson",
+                Email = contributorEmail,
+                PhoneNumber = "555-0123",
+                Address = "123 Radio Street",
+                Biography = "Professional DJ with 10 years of experience in radio broadcasting.",
+                UserId = contributorUser.Id
+            };
+            await contributorRepo.CreateAsync(contributor);
         }
     }
 
@@ -819,5 +853,61 @@ app.MapPost("/events/{id:int}/delete", (int id, SchedulerService scheduler) =>
 });
 
 app.MapGet("/", () => "Radio API - Available endpoints: /schedule/today, /schedule/week, /events/{id}, POST /events, POST /events/{id}/reschedule, POST /events/{id}/hosts, etc.");
+
+// In-memory conversation storage
+var conversations = new Dictionary<string, List<ChatMessage>>();
+
+// AI Music Suggestions Endpoint
+app.MapGet("/ai/suggest", async (string prompt, string? conversationId, IConfiguration config) =>
+{
+    var token = config["AI:GitHubToken"];
+    
+    if (string.IsNullOrEmpty(token) || token == "YOUR_GITHUB_TOKEN_HERE")
+    {
+        return Results.BadRequest("GitHub token not configured in appsettings.json");
+    }
+
+    var client = new AzureOpenAIClient(
+        new Uri("https://models.inference.ai.azure.com"),
+        new System.ClientModel.ApiKeyCredential(token));
+    
+    var chatClient = client.GetChatClient("gpt-4o-mini");
+
+    var systemPrompt = """You are a friendly radio DJ assistant. When given a prompt about music, return a JSON object with two fields: "message" (a brief, enthusiastic 1-2 sentence intro about the music selection) and "songs" (an array of 10 songs, each with "title" and "artist" fields). No markdown, no code blocks - just raw JSON starting with { and ending with }. Remember previous suggestions in this conversation so you can respond to follow-ups like "more like this", "less ballads", "make it more upbeat", etc.""";
+
+    // Get or create conversation history
+    var isNewConversation = string.IsNullOrEmpty(conversationId) || !conversations.ContainsKey(conversationId);
+    if (isNewConversation)
+    {
+        conversationId = Guid.NewGuid().ToString("N")[..8];
+        conversations[conversationId] = new List<ChatMessage> { new SystemChatMessage(systemPrompt) };
+    }
+    
+    var history = conversations[conversationId];
+    history.Add(new UserChatMessage(prompt));
+
+    var completion = await chatClient.CompleteChatAsync(history);
+
+    var response = completion.Value.Content[0].Text;
+    
+    // Store assistant response in history
+    history.Add(new AssistantChatMessage(response));
+    
+    // Clean up any markdown formatting
+    response = response.Trim();
+    if (response.StartsWith("```json"))
+        response = response.Substring(7);
+    else if (response.StartsWith("```"))
+        response = response.Substring(3);
+    if (response.EndsWith("```"))
+        response = response.Substring(0, response.Length - 3);
+    response = response.Trim();
+    
+    var result = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(response);
+    return Results.Ok(new { conversationId, data = result });
+})
+.WithName("SuggestMusic")
+.WithDescription("Get AI-generated music suggestions. Use conversationId for follow-ups like 'more like this'")
+.WithTags("AI");
 
 app.Run();

@@ -58,3 +58,17 @@ export async function deleteEvent(id) {
 
   return response;
 }
+
+// Get AI music suggestions
+export async function getAISuggestions(prompt, conversationId = null) {
+  let url = `${API_BASE_URL}/ai/suggest?prompt=${encodeURIComponent(prompt)}`;
+  if (conversationId) {
+    url += `&conversationId=${conversationId}`;
+  }
+
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error("Failed to get AI suggestions");
+  }
+  return response.json();
+}

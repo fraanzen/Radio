@@ -1,11 +1,13 @@
 import { useState, useEffect } from "react";
 import { getTodaySchedule } from "../services/api";
+import AISuggestions from "./AISuggestions";
 
 function Schedule() {
   const [events, setEvents] = useState([]);
   const [currentDate, setCurrentDate] = useState(new Date());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [showAISuggestions, setShowAISuggestions] = useState(false);
 
   useEffect(() => {
     async function fetchSchedule() {
@@ -156,30 +158,43 @@ function Schedule() {
     <div className="container mt-4">
       <div className="d-flex justify-content-between align-items-center mb-4">
         <h2>Schedule</h2>
-        <div className="btn-group" role="group">
+        <div className="d-flex gap-2">
           <button
-            className="btn btn-outline-secondary"
-            onClick={goToPreviousDay}
-            title="Previous Day"
+            className="btn btn-success"
+            onClick={() => setShowAISuggestions(true)}
           >
-            ← Previous
+            🎵 AI Suggestions
           </button>
-          <button
-            className="btn btn-outline-primary"
-            onClick={goToToday}
-            title="Go to Today"
-          >
-            Today
-          </button>
-          <button
-            className="btn btn-outline-secondary"
-            onClick={goToNextDay}
-            title="Next Day"
-          >
-            Next →
-          </button>
+          <div className="btn-group" role="group">
+            <button
+              className="btn btn-outline-secondary"
+              onClick={goToPreviousDay}
+              title="Previous Day"
+            >
+              ← Previous
+            </button>
+            <button
+              className="btn btn-outline-primary"
+              onClick={goToToday}
+              title="Go to Today"
+            >
+              Today
+            </button>
+            <button
+              className="btn btn-outline-secondary"
+              onClick={goToNextDay}
+              title="Next Day"
+            >
+              Next →
+            </button>
+          </div>
         </div>
       </div>
+
+      <AISuggestions
+        isOpen={showAISuggestions}
+        onClose={() => setShowAISuggestions(false)}
+      />
 
       <p className="text-muted">
         {currentDate.toLocaleDateString("en-US", {
